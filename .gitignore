@@ -1,0 +1,11 @@
+# Virtual environment
+.venv/
+venv/
+env/
+__pycache__/
+
+# FastF1 cache directory (Crucial!)
+cache/
+f1_cache/
+*.pkl
+*.sqlite
