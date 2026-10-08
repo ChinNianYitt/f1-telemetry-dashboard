@@ -14,20 +14,16 @@ import requests
 
 
 # --- FASTF1 CACHE SETUP ---
-# Creates a cache directory if it doesn't exist, preventing crashes in cloud environments
-cache_dir = "f1_cache"
-if not os.path.exists(cache_dir):
-    os.makedirs(cache_dir)
-fastf1.Cache.enable_cache(cache_dir)
+# Uses the system temp directory so 0 MB of permanent space is taken on your laptop
+cache_dir = os.path.join(tempfile.gettempdir(), "f1_cache")
+os.makedirs(cache_dir, exist_ok=True)
+try:
+    fastf1.Cache.enable_cache(cache_dir)
+except Exception:
+    pass
 
 # --- STREAMLIT PAGE CONFIG ---
 st.set_page_config(page_title="F1 Telemetry Dashboard", layout="wide")
-
-
-
-# Ensure cache directory exists
-os.makedirs("cache", exist_ok=True)
-fastf1.Cache.enable_cache("cache")
 
 st.title("🏎️ Formula 1 Race & Telemetry Dashboard")
 
