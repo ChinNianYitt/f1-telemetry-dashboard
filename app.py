@@ -11,6 +11,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 from datetime import datetime, timezone
 import requests
+import tempfile
 
 
 # --- FASTF1 CACHE SETUP ---
