@@ -37,12 +37,8 @@ jobs:
           curl --socks5-hostname 127.0.0.1:9050 https://checkip.amazonaws.com
 
       - name: Run Exporter Script via Tor Network
-        env:
-          HTTP_PROXY: "socks5h://127.0.0.1:9050"
-          HTTPS_PROXY: "socks5h://127.0.0.1:9050"
-          ALL_PROXY: "socks5h://127.0.0.1:9050"
         run: |
-          python export_2026_showcase.py
+          torsocks python export_2026_showcase.py
 
       - name: Commit and Push New Parquet Files
         run: |
