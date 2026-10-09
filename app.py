@@ -131,37 +131,67 @@ class MockSession:
                 return Telemetry(driver_data)
         return None
 
+# Alias map to translate official Grand Prix names to file slugs
+GP_ALIASES = {
+    "hungarian": ["hungary", "hungaroring", "hungarian"],
+    "italian": ["monza", "italy", "italian"],
+    "spanish": ["spain", "madrid", "catalunya", "barcelona", "spanish"],
+    "dutch": ["dutch", "zandvoort", "netherlands"],
+    "azerbaijan": ["baku", "azerbaijan"],
+    "bahrain": ["sakhir", "bahrain"],
+    "british": ["silverstone", "british", "britain"],
+    "belgian": ["spa", "belgian", "belgium"],
+    "singapore": ["marina", "singapore"],
+    "japanese": ["suzuka", "japan", "japanese"],
+    "australian": ["albert_park", "melbourne", "australia", "australian"],
+    "monaco": ["monaco", "monte_carlo"],
+    "canadian": ["montreal", "gilles_villeneuve", "canada", "canadian"],
+    "austrian": ["red_bull_ring", "spielberg", "austria", "austrian"],
+    "united_states": ["cota", "austin", "usa", "united_states"],
+    "mexico_city": ["mexico", "hermanos_rodriguez", "mexico_city"],
+    "sao_paulo": ["interlagos", "brazil", "sao_paulo"],
+    "las_vegas": ["vegas", "las_vegas"],
+    "qatar": ["losail", "lusail", "qatar"],
+    "abu_dhabi": ["yas_marina", "abu_dhabi"]
+}
+
 @st.cache_data(show_spinner=False)
 def load_session(year, grand_prix, session_code):
-    gp_query = str(grand_prix).lower().replace("grand prix", "").strip().replace(" ", "_")
+    # Normalize GP string (e.g. "Hungarian Grand Prix" -> "hungarian")
+    gp_clean = str(grand_prix).lower().replace("grand prix", "").strip().replace(" ", "_")
     
-    # 1. Check offline Parquet directory
+    # Collect all acceptable search terms for this race
+    search_terms = {gp_clean}
+    for key, aliases in GP_ALIASES.items():
+        if key in gp_clean or any(a in gp_clean for a in aliases):
+            search_terms.update(aliases)
+            search_terms.add(key)
+    
+    # 1. Match against offline Parquet files in showcase_data/
     if os.path.exists(SHOWCASE_DIR):
         for f in os.listdir(SHOWCASE_DIR):
-            if f.startswith(f"{year}_") and (gp_query in f.lower()) and f.endswith("_laps.parquet"):
-                base_slug = f.replace("_laps.parquet", "")
-                try:
-                    laps_df = pd.read_parquet(os.path.join(SHOWCASE_DIR, f"{base_slug}_laps.parquet"))
-                    results_df = pd.read_parquet(os.path.join(SHOWCASE_DIR, f"{base_slug}_results.parquet"))
-                    tel_path = os.path.join(SHOWCASE_DIR, f"{base_slug}_telemetry.parquet")
-                    tel_df = pd.read_parquet(tel_path) if os.path.exists(tel_path) else None
-                    
-                    # Map official 2026 round numbers
-                    round_num = 1
-                    if "azerbaijan" in base_slug or "baku" in base_slug:
-                        round_num = 15
-                    elif "bahrain" in base_slug or "sepang" in base_slug:
-                        round_num = 16
-                    else:
-                        parts = base_slug.split("_")
-                        if len(parts) > 1 and parts[1].isdigit():
-                            round_num = int(parts[1])
-                        
-                    return MockSession(laps_df, results_df, tel_df, round_num), None
-                except Exception:
-                    pass
+            f_lower = f.lower()
+            if f_lower.startswith(f"{year}_") and f_lower.endswith("_laps.parquet"):
+                # Check if any recognized alias is contained in the filename
+                if any(term in f_lower for term in search_terms):
+                    base_slug = f.replace("_laps.parquet", "")
+                    try:
+                        laps_df = pd.read_parquet(os.path.join(SHOWCASE_DIR, f"{base_slug}_laps.parquet"))
+                        results_df = pd.read_parquet(os.path.join(SHOWCASE_DIR, f"{base_slug}_results.parquet"))
+                        tel_path = os.path.join(SHOWCASE_DIR, f"{base_slug}_telemetry.parquet")
+                        tel_df = pd.read_parquet(tel_path) if os.path.exists(tel_path) else None
 
-    # 2. Online fallback
+                        round_num = 1
+                        for part in base_slug.split("_"):
+                            if part.isdigit() and int(part) != year:
+                                round_num = int(part)
+                                break
+
+                        return MockSession(laps_df, results_df, tel_df, round_num), None
+                    except Exception:
+                        pass
+
+    # 2. Live API Fallback
     try:
         session = fastf1.get_session(year, grand_prix, session_code)
         session.load(telemetry=True, laps=True, weather=False)
