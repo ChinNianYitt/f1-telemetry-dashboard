@@ -4,16 +4,6 @@ import tempfile
 import fastf1
 import pandas as pd
 
-# --- ROUTE ALL PYTHON SOCKETS THROUGH LOCAL TOR PROXY ---
-try:
-    import socks
-    import socket
-    socks.set_default_proxy(socks.SOCKS5, "127.0.0.1", 9050)
-    socket.socket = socks.socksocket
-    print(" Tor SOCKS5 proxy hook active.")
-except Exception as e:
-    print(f"Running without proxy hook: {e}")
-
 # Temporary directory for fast raw downloads
 temp_cache = os.path.join(tempfile.gettempdir(), "f1_temp_cache")
 os.makedirs(temp_cache, exist_ok=True)
@@ -37,7 +27,6 @@ for year, round_num, gp_name, slug in targets:
     results_file = os.path.join(out_dir, f"{slug}_results.parquet")
     tel_file = os.path.join(out_dir, f"{slug}_telemetry.parquet")
 
-    # Skip if already downloaded
     if os.path.exists(laps_file) and os.path.exists(results_file) and os.path.exists(tel_file):
         print(f"⏭️ Skipping Round {round_num}: {gp_name} (already exists).")
         continue
