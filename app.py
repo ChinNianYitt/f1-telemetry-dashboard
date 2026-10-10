@@ -25,6 +25,44 @@ except Exception:
 # --- STREAMLIT PAGE CONFIG ---
 st.set_page_config(page_title="F1 Telemetry Dashboard", layout="wide")
 
+# Mobile Responsive CSS Optimization
+st.markdown("""
+<style>
+    /* Allow tab labels to wrap gracefully on narrow phone screens */
+    button[data-baseweb="tab"] {
+        padding-left: 10px !important;
+        padding-right: 10px !important;
+        white-space: normal !important;
+        font-size: 0.9rem !important;
+    }
+    
+    /* Responsive metric font sizes to prevent truncation */
+    div[data-testid="stMetricValue"] {
+        font-size: 1.35rem !important;
+    }
+    div[data-testid="stMetricLabel"] {
+        font-size: 0.85rem !important;
+    }
+    
+    /* Optimize main content padding on mobile */
+    @media (max-width: 768px) {
+        .block-container {
+            padding-top: 1.5rem !important;
+            padding-left: 0.8rem !important;
+            padding-right: 0.8rem !important;
+        }
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Plotly Mobile Touch Config
+PLOTLY_CONFIG = {
+    "responsive": True,
+    "scrollZoom": False,
+    "displayModeBar": False
+}
+
+
 st.title("🏎️ Formula 1 Race & Telemetry Dashboard")
 
 # --- SIDEBAR CONTROLS ---
@@ -632,8 +670,8 @@ with tab_telemetry:
                 fig_tel.update_yaxes(title_text="Delta (s)", row=5, col=1)
                 fig_tel.update_xaxes(title_text="Track Distance (m)", row=5, col=1)
 
-                fig_tel.update_layout(template="plotly_dark", height=1000, hovermode="x unified")
-                st.plotly_chart(fig_tel, use_container_width=True)
+                fig_tel.update_layout(template="plotly_dark", height=720, hovermode="x unified")
+                st.plotly_chart(fig_tel, use_container_width=True, config=PLOTLY_CONFIG)
             else:
                 st.warning(f"No telemetry data found for {driver_2}.")
         else:
@@ -996,7 +1034,7 @@ with tab_teammates:
                         color_continuous_scale='RdYlBu'
                     )
                     fig_delta.update_layout(template='plotly_dark')
-                    st.plotly_chart(fig_delta, use_container_width=True)
+                    st.plotly_chart(fig_delta, use_container_width=True, config=PLOTLY_CONFIG)
 
             # --- HARDWARE TELEMETRY OVERLAY (FASTEST LAPS) ---
             st.markdown("---")
