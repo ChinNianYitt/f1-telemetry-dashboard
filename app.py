@@ -81,6 +81,32 @@ def get_standings_after_race(year, round_number):
     except Exception:
         return None, None
 
+# --- SHOWCASE DIRECTORY & ALIAS CONFIG ---
+SHOWCASE_DIR = "showcase_data"
+
+GP_ALIASES = {
+    "hungarian": ["hungary", "hungaroring", "hungarian"],
+    "italian": ["monza", "italy", "italian"],
+    "spanish": ["spain", "madrid", "catalunya", "barcelona", "spanish"],
+    "dutch": ["dutch", "zandvoort", "netherlands"],
+    "azerbaijan": ["baku", "azerbaijan"],
+    "bahrain": ["sakhir", "bahrain"],
+    "british": ["silverstone", "british", "britain"],
+    "belgian": ["spa", "belgian", "belgium"],
+    "singapore": ["marina", "singapore"],
+    "japanese": ["suzuka", "japan", "japanese"],
+    "australian": ["albert_park", "melbourne", "australia", "australian"],
+    "monaco": ["monaco", "monte_carlo"],
+    "canadian": ["montreal", "gilles_villeneuve", "canada", "canadian"],
+    "austrian": ["red_bull_ring", "spielberg", "austria", "austrian"],
+    "united_states": ["cota", "austin", "usa", "united_states"],
+    "mexico_city": ["mexico", "hermanos_rodriguez", "mexico_city"],
+    "sao_paulo": ["interlagos", "brazil", "sao_paulo"],
+    "las_vegas": ["vegas", "las_vegas"],
+    "qatar": ["losail", "lusail", "qatar"],
+    "abu_dhabi": ["yas_marina", "abu_dhabi"]
+}
+
 
 # --- DYNAMIC GRAND PRIX DISCOVERY (OFFLINE FIRST) ---
 @st.cache_data
@@ -138,7 +164,6 @@ grand_prix = st.sidebar.selectbox(
 # Hardcode session to Grand Prix Race
 session_type = "R"
 
-SHOWCASE_DIR = "showcase_data"
 
 class MockSession:
     def __init__(self, laps_df, results_df, telemetry_df=None, round_num=1):
@@ -155,29 +180,6 @@ class MockSession:
                 return Telemetry(driver_data)
         return None
 
-# Alias map to translate official Grand Prix names to file slugs
-GP_ALIASES = {
-    "hungarian": ["hungary", "hungaroring", "hungarian"],
-    "italian": ["monza", "italy", "italian"],
-    "spanish": ["spain", "madrid", "catalunya", "barcelona", "spanish"],
-    "dutch": ["dutch", "zandvoort", "netherlands"],
-    "azerbaijan": ["baku", "azerbaijan"],
-    "bahrain": ["sakhir", "bahrain"],
-    "british": ["silverstone", "british", "britain"],
-    "belgian": ["spa", "belgian", "belgium"],
-    "singapore": ["marina", "singapore"],
-    "japanese": ["suzuka", "japan", "japanese"],
-    "australian": ["albert_park", "melbourne", "australia", "australian"],
-    "monaco": ["monaco", "monte_carlo"],
-    "canadian": ["montreal", "gilles_villeneuve", "canada", "canadian"],
-    "austrian": ["red_bull_ring", "spielberg", "austria", "austrian"],
-    "united_states": ["cota", "austin", "usa", "united_states"],
-    "mexico_city": ["mexico", "hermanos_rodriguez", "mexico_city"],
-    "sao_paulo": ["interlagos", "brazil", "sao_paulo"],
-    "las_vegas": ["vegas", "las_vegas"],
-    "qatar": ["losail", "lusail", "qatar"],
-    "abu_dhabi": ["yas_marina", "abu_dhabi"]
-}
 
 @st.cache_data(show_spinner=False)
 def load_session(year, grand_prix, session_code):
