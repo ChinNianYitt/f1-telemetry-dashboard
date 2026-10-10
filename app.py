@@ -724,92 +724,95 @@ with tab_standings:
 # PART 7: TEAMMATE BATTLE
 # ==========================================
 
-if session is not None and hasattr(session, 'results') and hasattr(session, 'laps'):
-    results_df = session.results.copy()
-    laps_df = session.laps.copy()
+# ==========================================
+# PART 7: TEAMMATE BATTLE
+# ==========================================
+with tab_teammates:
+    st.subheader("⚔️ Teammate Head-to-Head Battle")
 
-    # Identify teams that have at least 2 drivers present in this session
-    team_counts = results_df.groupby('TeamName')['Abbreviation'].nunique()
-    valid_teams = team_counts[team_counts >= 2].index.tolist()
+    if session is not None and hasattr(session, 'results') and hasattr(session, 'laps'):
+        results_df = session.results.copy()
+        laps_df = session.laps.copy()
 
-    if not valid_teams:
-        st.info("No paired teammate data available for this session.")
-    else:
-        selected_team = st.selectbox("Select Team to Compare", valid_teams)
-        team_drivers = results_df[results_df['TeamName'] == selected_team]['Abbreviation'].unique().tolist()[:2]
-        d1, d2 = team_drivers[0], team_drivers[1]
+        # Identify teams that have at least 2 drivers present in this session
+        team_counts = results_df.groupby('TeamName')['Abbreviation'].nunique()
+        valid_teams = team_counts[team_counts >= 2].index.tolist()
 
-        # Extract driver information
-        info_d1 = results_df[results_df['Abbreviation'] == d1].iloc[0]
-        info_d2 = results_df[results_df['Abbreviation'] == d2].iloc[0]
+        if not valid_teams:
+            st.info("No paired teammate data available for this session.")
+        else:
+            selected_team = st.selectbox("Select Team to Compare", valid_teams)
+            team_drivers = results_df[results_df['TeamName'] == selected_team]['Abbreviation'].unique().tolist()[:2]
+            d1, d2 = team_drivers[0], team_drivers[1]
 
-        # Filter clean representative laps (excluding pit-in/out laps)
-        clean_laps = laps_df[laps_df['PitInTime'].isna() & laps_df['PitOutTime'].isna()].copy()
-        clean_laps['LapTimeSeconds'] = clean_laps['LapTime'].apply(
-            lambda x: x.total_seconds() if pd.notna(x) and hasattr(x, 'total_seconds') else None
-        )
+            # Extract driver information
+            info_d1 = results_df[results_df['Abbreviation'] == d1].iloc[0]
+            info_d2 = results_df[results_df['Abbreviation'] == d2].iloc[0]
 
-        d1_laps = clean_laps[clean_laps['Driver'] == d1]
-        d2_laps = clean_laps[clean_laps['Driver'] == d2]
-
-        # Calculate metrics
-        d1_best = d1_laps['LapTimeSeconds'].min() if not d1_laps.empty else None
-        d2_best = d2_laps['LapTimeSeconds'].min() if not d2_laps.empty else None
-
-        d1_median = d1_laps['LapTimeSeconds'].median() if not d1_laps.empty else None
-        d2_median = d2_laps['LapTimeSeconds'].median() if not d2_laps.empty else None
-
-        # Format helper
-        def fmt_time(sec):
-            if pd.isna(sec) or sec is None:
-                return "N/A"
-            m = int(sec // 60)
-            s = sec % 60
-            return f"{m}:{s:06.3f}"
-
-        # KPI metric comparison cards
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric(f"{d1} Finish Position", f"P{info_d1.get('Position', 'N/A')}", f"Grid: P{info_d1.get('GridPosition', 'N/A')}")
-        with col2:
-            st.metric(f"{d2} Finish Position", f"P{info_d2.get('Position', 'N/A')}", f"Grid: P{info_d2.get('GridPosition', 'N/A')}")
-        with col3:
-            st.metric(f"{d1} Fastest Lap", fmt_time(d1_best))
-        with col4:
-            st.metric(f"{d2} Fastest Lap", fmt_time(d2_best))
-
-        # Lap-by-Lap Pace Trend Comparison
-        merged_laps = pd.concat([d1_laps, d2_laps])
-        if not merged_laps.empty and merged_laps['LapTimeSeconds'].notna().any():
-            fig_battle = px.line(
-                merged_laps,
-                x='LapNumber',
-                y='LapTimeSeconds',
-                color='Driver',
-                title=f"Race Pace Comparison: {d1} vs {d2} ({selected_team})",
-                labels={'LapNumber': 'Lap Number', 'LapTimeSeconds': 'Lap Time (seconds)'},
-                color_discrete_map={d1: '#FF5733', d2: '#33C1FF'}
+            # Filter clean representative laps (excluding pit-in/out laps)
+            clean_laps = laps_df[laps_df['PitInTime'].isna() & laps_df['PitOutTime'].isna()].copy()
+            clean_laps['LapTimeSeconds'] = clean_laps['LapTime'].apply(
+                lambda x: x.total_seconds() if pd.notna(x) and hasattr(x, 'total_seconds') else None
             )
-            fig_battle.update_layout(template='plotly_dark', hovermode='x unified')
-            st.plotly_chart(fig_battle, use_container_width=True)
 
-            # Lap-by-lap Delta Chart (D2 relative to D1)
-            p1 = d1_laps[['LapNumber', 'LapTimeSeconds']].rename(columns={'LapTimeSeconds': 'T1'})
-            p2 = d2_laps[['LapNumber', 'LapTimeSeconds']].rename(columns={'LapTimeSeconds': 'T2'})
-            delta_df = pd.merge(p1, p2, on='LapNumber').dropna()
+            d1_laps = clean_laps[clean_laps['Driver'] == d1]
+            d2_laps = clean_laps[clean_laps['Driver'] == d2]
 
-            if not delta_df.empty:
-                delta_df['Delta'] = delta_df['T2'] - delta_df['T1']
-                fig_delta = px.bar(
-                    delta_df,
+            # Calculate metrics
+            d1_best = d1_laps['LapTimeSeconds'].min() if not d1_laps.empty else None
+            d2_best = d2_laps['LapTimeSeconds'].min() if not d2_laps.empty else None
+
+            # Format helper
+            def fmt_time(sec):
+                if pd.isna(sec) or sec is None:
+                    return "N/A"
+                m = int(sec // 60)
+                s = sec % 60
+                return f"{m}:{s:06.3f}"
+
+            # KPI metric comparison cards
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric(f"{d1} Finish Position", f"P{info_d1.get('Position', 'N/A')}", f"Grid: P{info_d1.get('GridPosition', 'N/A')}")
+            with col2:
+                st.metric(f"{d2} Finish Position", f"P{info_d2.get('Position', 'N/A')}", f"Grid: P{info_d2.get('GridPosition', 'N/A')}")
+            with col3:
+                st.metric(f"{d1} Fastest Lap", fmt_time(d1_best))
+            with col4:
+                st.metric(f"{d2} Fastest Lap", fmt_time(d2_best))
+
+            # Lap-by-Lap Pace Trend Comparison
+            merged_laps = pd.concat([d1_laps, d2_laps])
+            if not merged_laps.empty and merged_laps['LapTimeSeconds'].notna().any():
+                fig_battle = px.line(
+                    merged_laps,
                     x='LapNumber',
-                    y='Delta',
-                    title=f"Pace Delta per Lap: positive = {d1} faster, negative = {d2} faster",
-                    labels={'LapNumber': 'Lap Number', 'Delta': f'Gap (s) [{d2} - {d1}]'},
-                    color='Delta',
-                    color_continuous_scale='RdYlBu'
+                    y='LapTimeSeconds',
+                    color='Driver',
+                    title=f"Race Pace Comparison: {d1} vs {d2} ({selected_team})",
+                    labels={'LapNumber': 'Lap Number', 'LapTimeSeconds': 'Lap Time (seconds)'},
+                    color_discrete_map={d1: '#FF5733', d2: '#33C1FF'}
                 )
-                fig_delta.update_layout(template='plotly_dark')
-                st.plotly_chart(fig_delta, use_container_width=True)
-else:
-    st.info("Select a valid session to display teammate analytics.")
+                fig_battle.update_layout(template='plotly_dark', hovermode='x unified')
+                st.plotly_chart(fig_battle, use_container_width=True)
+
+                # Lap-by-lap Delta Chart (D2 relative to D1)
+                p1 = d1_laps[['LapNumber', 'LapTimeSeconds']].rename(columns={'LapTimeSeconds': 'T1'})
+                p2 = d2_laps[['LapNumber', 'LapTimeSeconds']].rename(columns={'LapTimeSeconds': 'T2'})
+                delta_df = pd.merge(p1, p2, on='LapNumber').dropna()
+
+                if not delta_df.empty:
+                    delta_df['Delta'] = delta_df['T2'] - delta_df['T1']
+                    fig_delta = px.bar(
+                        delta_df,
+                        x='LapNumber',
+                        y='Delta',
+                        title=f"Pace Delta per Lap: positive = {d1} faster, negative = {d2} faster",
+                        labels={'LapNumber': 'Lap Number', 'Delta': f'Gap (s) [{d2} - {d1}]'},
+                        color='Delta',
+                        color_continuous_scale='RdYlBu'
+                    )
+                    fig_delta.update_layout(template='plotly_dark')
+                    st.plotly_chart(fig_delta, use_container_width=True)
+    else:
+        st.info("Select a valid session to display teammate analytics.")
