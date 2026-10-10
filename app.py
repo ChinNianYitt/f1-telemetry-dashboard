@@ -112,7 +112,8 @@ grand_prix = st.sidebar.selectbox(
     index=default_gp_idx
 )
 
-session_type = st.sidebar.selectbox("Session", ["R", "Q"], format_func=lambda x: "Race" if x == "R" else "Qualifying")
+# Hardcode session to Grand Prix Race
+session_type = "R"
 
 SHOWCASE_DIR = "showcase_data"
 
@@ -193,14 +194,14 @@ def load_session(year, grand_prix, session_code):
 
     # 2. Live API Fallback
     try:
-        session = fastf1.get_session(year, grand_prix, session_code)
+        session = fastf1.get_session(year, grand_prix, "R")
         session.load(telemetry=True, laps=True, weather=False)
         return session, None
     except Exception as e:
         return None, str(e)
 
 with st.spinner("Fetching F1 session data..."):
-    session, load_error = load_session(year, grand_prix, session_type)
+    session, load_error = load_session(year, grand_prix, "R")
 
 has_laps = False
 if session is not None and load_error is None:
