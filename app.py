@@ -720,9 +720,6 @@ with tab_standings:
     else:
         st.info("Championship standings are unavailable for this round.")
 
-# ==========================================
-# PART 7: TEAMMATE BATTLE
-# ==========================================
 
 # ==========================================
 # PART 7: TEAMMATE BATTLE
@@ -814,6 +811,70 @@ with tab_teammates:
                     )
                     fig_delta.update_layout(template='plotly_dark')
                     st.plotly_chart(fig_delta, use_container_width=True)
+
+            # --- HARDWARE TELEMETRY OVERLAY (FASTEST LAPS) ---
+            st.markdown("---")
+            st.subheader(f"⚡ Head-to-Head Fastest Lap Telemetry: {d1} vs {d2}")
+
+            tel_d1 = session.get_driver_telemetry(d1) if hasattr(session, "get_driver_telemetry") else None
+            tel_d2 = session.get_driver_telemetry(d2) if hasattr(session, "get_driver_telemetry") else None
+
+            if tel_d1 is None:
+                l1 = session.laps.pick_driver(d1).pick_fastest()
+                if l1 is not None:
+                    try: tel_d1 = l1.get_telemetry()
+                    except Exception: pass
+
+            if tel_d2 is None:
+                l2 = session.laps.pick_driver(d2).pick_fastest()
+                if l2 is not None:
+                    try: tel_d2 = l2.get_telemetry()
+                    except Exception: pass
+
+            if tel_d1 is not None and tel_d2 is not None and not tel_d1.empty and not tel_d2.empty:
+                c1, c2 = "#FF5733", "#33C1FF"
+
+                fig_telem = sp.make_subplots(
+                    rows=4, cols=1,
+                    shared_xaxes=True,
+                    vertical_spacing=0.03,
+                    row_heights=[0.40, 0.20, 0.18, 0.22],
+                    subplot_titles=(
+                        f"Speed (km/h): {d1} ({fmt_time(d1_best)}) vs {d2} ({fmt_time(d2_best)})",
+                        "Throttle Application (%)",
+                        "Brake Application",
+                        "Gear Selection"
+                    )
+                )
+
+                # 1. Speed Trace
+                fig_telem.add_trace(go.Scatter(x=tel_d1["Distance"], y=tel_d1["Speed"], name=d1, line=dict(color=c1, width=2)), row=1, col=1)
+                fig_telem.add_trace(go.Scatter(x=tel_d2["Distance"], y=tel_d2["Speed"], name=d2, line=dict(color=c2, width=2)), row=1, col=1)
+
+                # 2. Throttle Trace
+                fig_telem.add_trace(go.Scatter(x=tel_d1["Distance"], y=tel_d1["Throttle"], name=f"{d1} Throttle", line=dict(color=c1, width=1.5), showlegend=False), row=2, col=1)
+                fig_telem.add_trace(go.Scatter(x=tel_d2["Distance"], y=tel_d2["Throttle"], name=f"{d2} Throttle", line=dict(color=c2, width=1.5), showlegend=False), row=2, col=1)
+
+                # 3. Brake Trace
+                b1 = tel_d1["Brake"].astype(int) if tel_d1["Brake"].dtype == bool else tel_d1["Brake"]
+                b2 = tel_d2["Brake"].astype(int) if tel_d2["Brake"].dtype == bool else tel_d2["Brake"]
+                fig_telem.add_trace(go.Scatter(x=tel_d1["Distance"], y=b1, name=f"{d1} Brake", line=dict(color=c1, width=1.5), fill="tozeroy", showlegend=False), row=3, col=1)
+                fig_telem.add_trace(go.Scatter(x=tel_d2["Distance"], y=b2, name=f"{d2} Brake", line=dict(color=c2, width=1.5), fill="tozeroy", showlegend=False), row=3, col=1)
+
+                # 4. Gear Selection Trace
+                fig_telem.add_trace(go.Scatter(x=tel_d1["Distance"], y=tel_d1["nGear"], name=f"{d1} Gear", line=dict(color=c1, width=1.5, shape='hv'), showlegend=False), row=4, col=1)
+                fig_telem.add_trace(go.Scatter(x=tel_d2["Distance"], y=tel_d2["nGear"], name=f"{d2} Gear", line=dict(color=c2, width=1.5, shape='hv'), showlegend=False), row=4, col=1)
+
+                fig_telem.update_yaxes(title_text="km/h", row=1, col=1)
+                fig_telem.update_yaxes(title_text="Throttle %", range=[-5, 105], row=2, col=1)
+                fig_telem.update_yaxes(title_text="Brake", range=[-0.1, 1.1] if b1.max() <= 1 else [-5, 105], row=3, col=1)
+                fig_telem.update_yaxes(title_text="Gear", dtick=1, range=[0.5, 8.5], row=4, col=1)
+                fig_telem.update_xaxes(title_text="Track Distance (m)", row=4, col=1)
+
+                fig_telem.update_layout(template="plotly_dark", height=850, hovermode="x unified")
+                st.plotly_chart(fig_telem, use_container_width=True)
+            else:
+                st.info(f"Detailed fastest-lap telemetry traces unavailable for {d1} or {d2} in this session.")
     else:
         st.info("Select a valid session to display teammate analytics.")
 
@@ -821,6 +882,7 @@ with tab_teammates:
 # PART 8: THEORETICAL OPTIMAL LAP ANALYZER
 # ==========================================
 with tab_ideal:
+    st.subheader("⏱️ Theoretical Optimal Lap vs. Actual Best")
     st.caption("Analyzes sector-by-sector execution and speed-trap performance across all race laps to calculate the driver's ultimate potential lap.")
 
     if session is not None and hasattr(session, 'laps') and not session.laps.empty:
