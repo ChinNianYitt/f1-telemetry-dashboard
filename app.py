@@ -230,7 +230,93 @@ tab_track, tab_stints, tab_telemetry, tab_positions, tab_deg, tab_standings, tab
 # 1. TRACK MAP & DOMINANCE HEATMAP
 with tab_track:
     st.subheader(f"Track Analysis - {grand_prix} ({year})")
-    
+
+    # --- RACE NEUTRALIZATION & INCIDENT SUMMARY ---
+    if session is not None and hasattr(session, 'laps') and not session.laps.empty and 'TrackStatus' in session.laps.columns:
+        # Determine dominant status per lap across the entire field
+        lap_status = (
+            session.laps.groupby('LapNumber')['TrackStatus']
+            .agg(lambda s: s.value_counts().index[0] if not s.empty else '1')
+            .reset_index()
+        )
+        lap_status['TrackStatus'] = lap_status['TrackStatus'].astype(str)
+
+        # Meaningful event mapper
+        def decode_status(code):
+            code_str = str(code)
+            if '5' in code_str: return "Red Flag"
+            if '4' in code_str: return "Safety Car (SC)"
+            if '6' in code_str or '7' in code_str: return "Virtual Safety Car (VSC)"
+            if '2' in code_str: return "Yellow Flag"
+            return "Clear / Green"
+
+        lap_status['Event'] = lap_status['TrackStatus'].apply(decode_status)
+
+        # Count incident laps
+        sc_laps = lap_status[lap_status['Event'] == "Safety Car (SC)"]['LapNumber'].nunique()
+        vsc_laps = lap_status[lap_status['Event'] == "Virtual Safety Car (VSC)"]['LapNumber'].nunique()
+        rf_laps = lap_status[lap_status['Event'] == "Red Flag"]['LapNumber'].nunique()
+        total_race_laps = int(lap_status['LapNumber'].max())
+
+        # Metric Cards
+        c_i1, c_i2, c_i3, c_i4 = st.columns(4)
+        c_i1.metric("🏁 Total Race Laps", total_race_laps)
+        c_i2.metric("🚗 Safety Car (SC)", f"{sc_laps} Laps", delta="Neutralized" if sc_laps > 0 else "None", delta_color="inverse")
+        c_i3.metric("⚠️ Virtual Safety Car", f"{vsc_laps} Laps", delta="Neutralized" if vsc_laps > 0 else "None", delta_color="inverse")
+        c_i4.metric("🚩 Red Flags", f"{rf_laps} Laps", delta="Suspended" if rf_laps > 0 else "None", delta_color="inverse")
+
+        # Group consecutive neutralization laps into distinct periods
+        neutralized = lap_status[lap_status['Event'] != "Clear / Green"].copy()
+        incident_ranges = []
+        if not neutralized.empty:
+            neutralized['group'] = (
+                (neutralized['LapNumber'] != neutralized['LapNumber'].shift() + 1) | 
+                (neutralized['Event'] != neutralized['Event'].shift())
+            ).cumsum()
+
+            for _, grp in neutralized.groupby('group'):
+                e_type = grp['Event'].iloc[0]
+                start_l = int(grp['LapNumber'].min())
+                end_l = int(grp['LapNumber'].max())
+                lap_label = f"Lap {start_l}" if start_l == end_l else f"Laps {start_l}–{end_l}"
+                incident_ranges.append(f"**{e_type}**: {lap_label}")
+
+        with st.expander("📋 View Race Neutralization & Incident Timeline", expanded=bool(incident_ranges)):
+            if incident_ranges:
+                st.markdown(" • " + "  \n • ".join(incident_ranges))
+            else:
+                st.success("Clean race: No Safety Car, VSC, or Red Flag interruptions recorded.")
+
+            # Visual status ribbon across full race distance
+            status_colors = {
+                "Clear / Green": "#00D2BE",
+                "Yellow Flag": "#FFF200",
+                "Virtual Safety Car (VSC)": "#FF9900",
+                "Safety Car (SC)": "#FF3333",
+                "Red Flag": "#8B0000"
+            }
+            lap_status['Dummy'] = 1
+            fig_incidents = px.bar(
+                lap_status,
+                x='LapNumber',
+                y='Dummy',
+                color='Event',
+                color_discrete_map=status_colors,
+                title="Race Status by Lap",
+                labels={'LapNumber': 'Lap Number'},
+                height=140
+            )
+            fig_incidents.update_yaxes(visible=False, showticklabels=False)
+            fig_incidents.update_layout(
+                template='plotly_dark',
+                margin=dict(l=10, r=10, t=35, b=10),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            st.plotly_chart(fig_incidents, use_container_width=True)
+
+        st.markdown("---")
+
+    # --- TRACK MAP DISPLAY MODES ---
     map_mode = st.radio(
         "Display Mode",
         ["Speed Heatmap", "Head-to-Head Track Dominance"],
@@ -334,6 +420,7 @@ with tab_track:
             st.plotly_chart(fig_dom, use_container_width=True)
         else:
             st.warning("Insufficient telemetry or GPS data for one or both drivers.")
+
 
 
 # 2. STINTS & TIRES
