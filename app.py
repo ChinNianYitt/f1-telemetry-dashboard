@@ -723,8 +723,6 @@ with tab_standings:
 # ==========================================
 # PART 7: TEAMMATE BATTLE
 # ==========================================
-st.markdown("---")
-st.subheader("⚔️ Part 7: Teammate Head-to-Head Battle")
 
 if session is not None and hasattr(session, 'results') and hasattr(session, 'laps'):
     results_df = session.results.copy()
