@@ -570,89 +570,156 @@ with tab_deg:
     st.subheader("Machine Learning: Tire Degradation & Stint Pace Predictor")
     st.caption("Fits an Ordinary Least Squares (OLS) Regression model on representative laps to isolate wear rate and predict stint cliff.")
 
-    col_ml_d, col_ml_stint = st.columns(2)
-    with col_ml_d:
-        deg_driver = st.selectbox("Select Driver to Model", drivers, index=0)
+    deg_driver = st.selectbox("Select Driver to Model", drivers, index=0)
+    driver_all_laps = session.laps.pick_driver(deg_driver).copy()
 
-    driver_all_laps = session.laps.pick_driver(deg_driver)
-    
     if not driver_all_laps.empty:
-        available_stints = sorted(driver_all_laps['Stint'].dropna().unique())
-        with col_ml_stint:
-            chosen_stint = st.selectbox("Select Stint Number", available_stints, index=0)
+        # Build stint overview metadata
+        stint_overview = []
+        for s_id, s_group in driver_all_laps.groupby('Stint'):
+            if pd.isna(s_id):
+                continue
+            compound = s_group['Compound'].dropna().iloc[0] if 'Compound' in s_group.columns and not s_group['Compound'].dropna().empty else "UNKNOWN"
+            total_laps = len(s_group)
+            
+            # Count clean push laps (quicklaps)
+            try:
+                clean_count = len(s_group.pick_quicklaps().dropna(subset=['TyreLife', 'LapTime']))
+            except Exception:
+                clean_count = len(s_group.dropna(subset=['TyreLife', 'LapTime']))
 
-        stint_laps = driver_all_laps[driver_all_laps['Stint'] == chosen_stint].copy()
-        try:
-            stint_laps = stint_laps.pick_quicklaps().dropna(subset=['TyreLife', 'LapTime'])
-        except Exception:
-            stint_laps = stint_laps.dropna(subset=['TyreLife', 'LapTime'])
+            stint_overview.append({
+                "Stint": int(s_id),
+                "Compound": str(compound).upper(),
+                "TotalLaps": total_laps,
+                "CleanLaps": clean_count,
+                "StartLap": int(s_group['LapNumber'].min()),
+                "EndLap": int(s_group['LapNumber'].max()),
+                "Status": "✅ Ready (≥4 Laps)" if clean_count >= 4 else "⚠️ Insufficient (<4 Laps)"
+            })
 
-        if len(stint_laps) >= 4:
-            compound_used = stint_laps['Compound'].iloc[0]
-            stint_laps['LapTimeSeconds'] = stint_laps['LapTime'].dt.total_seconds()
+        df_stints = pd.DataFrame(stint_overview).sort_values("Stint")
 
-            X = stint_laps[['TyreLife']].values
-            y = stint_laps['LapTimeSeconds'].values
+        if not df_stints.empty:
+            # 1. Graphical Stint Selector Reference Chart
+            compound_palette = {
+                "SOFT": "#FF3333",
+                "MEDIUM": "#FFF200",
+                "HARD": "#FFFFFF",
+                "INTERMEDIATE": "#39B54A",
+                "WET": "#00AEEF",
+                "UNKNOWN": "#888888"
+            }
 
-            model = LinearRegression()
-            model.fit(X, y)
-
-            deg_per_lap = model.coef_[0]
-            base_pace = model.intercept_
-            predictions = model.predict(X)
-            r2 = r2_score(y, predictions)
-
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Tire Compound", compound_used)
-            m2.metric("Base Pace (Fresh Tire)", f"{base_pace:.3f} s")
-            m3.metric("Degradation Rate", f"+{deg_per_lap:.3f} s/lap" if deg_per_lap > 0 else f"{deg_per_lap:.3f} s/lap")
-            m4.metric("Model Fit ($R^2$)", f"{r2:.2f}")
-
-            fig_ml = go.Figure()
-            fig_ml.add_trace(go.Scatter(
-                x=stint_laps['TyreLife'], y=stint_laps['LapTimeSeconds'],
-                mode='markers', name='Actual Lap Time',
-                marker=dict(size=9, color="#00D2BE", line=dict(width=1, color="white"))
-            ))
-
-            line_x = np.linspace(float(X.min()), float(X.max()), 50).reshape(-1, 1)
-            line_y = model.predict(line_x)
-
-            fig_ml.add_trace(go.Scatter(
-                x=line_x.flatten(), y=line_y,
-                mode='lines', name=f'Fit: +{deg_per_lap:.3f}s / lap',
-                line=dict(color="#FF1801", width=2.5, dash='dash')
-            ))
-
-            fig_ml.update_layout(
-                title=f"{deg_driver} Stint {chosen_stint} ({compound_used} Tires) Degradation Profile",
-                xaxis_title="Tire Life (Laps)",
-                yaxis_title="Lap Time (Seconds)",
+            fig_ref = px.bar(
+                df_stints,
+                x="TotalLaps",
+                y=df_stints["Stint"].astype(str),
+                color="Compound",
+                orientation="h",
+                text=df_stints.apply(lambda r: f"Stint {r['Stint']}: {r['Compound']} ({r['CleanLaps']} Clean Laps) - {r['Status']}", axis=1),
+                color_discrete_map=compound_palette,
+                labels={"TotalLaps": "Laps Run in Stint", "y": "Stint"},
+                title=f"📊 {deg_driver} Stint Overview & Model Eligibility"
+            )
+            fig_ref.update_layout(
                 template="plotly_dark",
-                height=520
+                height=180 + (len(df_stints) * 35),
+                showlegend=True,
+                yaxis=dict(autorange="reversed", title="Stint Number")
             )
-            st.plotly_chart(fig_ml, use_container_width=True)
+            fig_ref.update_traces(textposition='inside', insidetextanchor='start')
+            st.plotly_chart(fig_ref, use_container_width=True)
 
-            st.markdown("#### Stint Extrapolation Simulator")
-            current_max_life = int(X.max())
-            sim_laps = st.slider(
-                "Simulate pace if stint extended to tire age:", 
-                min_value=current_max_life + 1, 
-                max_value=current_max_life + 20, 
-                value=current_max_life + 5
+            # 2. Informative Selectbox with Compound & Clean Lap Indicators
+            stint_options = df_stints['Stint'].tolist()
+            stint_label_map = {
+                row['Stint']: f"Stint {row['Stint']} — {row['Compound']} (Laps {row['StartLap']}–{row['EndLap']} | {row['CleanLaps']} Clean Laps) {row['Status']}"
+                for _, row in df_stints.iterrows()
+            }
+
+            chosen_stint = st.selectbox(
+                "Select Stint to Run Regression",
+                options=stint_options,
+                format_func=lambda s: stint_label_map.get(s, f"Stint {s}")
             )
-            
-            projected_lap_time = model.predict([[sim_laps]])[0]
-            delta_from_base = projected_lap_time - base_pace
-            
-            st.info(
-                f"💡 At **Lap {sim_laps}** on this set, projected pace is **{projected_lap_time:.3f} s** "
-                f"(a drop-off of **{delta_from_base:.2f} s** compared to fresh rubber)."
-            )
+
+            # 3. Model Training
+            stint_laps = driver_all_laps[driver_all_laps['Stint'] == chosen_stint].copy()
+            try:
+                stint_laps = stint_laps.pick_quicklaps().dropna(subset=['TyreLife', 'LapTime'])
+            except Exception:
+                stint_laps = stint_laps.dropna(subset=['TyreLife', 'LapTime'])
+
+            if len(stint_laps) >= 4:
+                compound_used = stint_laps['Compound'].iloc[0]
+                stint_laps['LapTimeSeconds'] = stint_laps['LapTime'].dt.total_seconds()
+
+                X = stint_laps[['TyreLife']].values
+                y = stint_laps['LapTimeSeconds'].values
+
+                model = LinearRegression()
+                model.fit(X, y)
+
+                deg_per_lap = model.coef_[0]
+                base_pace = model.intercept_
+                predictions = model.predict(X)
+                r2 = r2_score(y, predictions)
+
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Tire Compound", compound_used)
+                m2.metric("Base Pace (Fresh Tire)", f"{base_pace:.3f} s")
+                m3.metric("Degradation Rate", f"+{deg_per_lap:.3f} s/lap" if deg_per_lap > 0 else f"{deg_per_lap:.3f} s/lap")
+                m4.metric("Model Fit ($R^2$)", f"{r2:.2f}")
+
+                fig_ml = go.Figure()
+                fig_ml.add_trace(go.Scatter(
+                    x=stint_laps['TyreLife'], y=stint_laps['LapTimeSeconds'],
+                    mode='markers', name='Actual Lap Time',
+                    marker=dict(size=9, color="#00D2BE", line=dict(width=1, color="white"))
+                ))
+
+                line_x = np.linspace(float(X.min()), float(X.max()), 50).reshape(-1, 1)
+                line_y = model.predict(line_x)
+
+                fig_ml.add_trace(go.Scatter(
+                    x=line_x.flatten(), y=line_y,
+                    mode='lines', name=f'Fit: +{deg_per_lap:.3f}s / lap',
+                    line=dict(color="#FF1801", width=2.5, dash='dash')
+                ))
+
+                fig_ml.update_layout(
+                    title=f"{deg_driver} Stint {chosen_stint} ({compound_used} Tires) Degradation Profile",
+                    xaxis_title="Tire Life (Laps)",
+                    yaxis_title="Lap Time (Seconds)",
+                    template="plotly_dark",
+                    height=520
+                )
+                st.plotly_chart(fig_ml, use_container_width=True)
+
+                st.markdown("#### Stint Extrapolation Simulator")
+                current_max_life = int(X.max())
+                sim_laps = st.slider(
+                    "Simulate pace if stint extended to tire age:", 
+                    min_value=current_max_life + 1, 
+                    max_value=current_max_life + 20, 
+                    value=current_max_life + 5
+                )
+                
+                projected_lap_time = model.predict([[sim_laps]])[0]
+                delta_from_base = projected_lap_time - base_pace
+                
+                st.info(
+                    f"💡 At **Lap {sim_laps}** on this set, projected pace is **{projected_lap_time:.3f} s** "
+                    f"(a drop-off of **{delta_from_base:.2f} s** compared to fresh rubber)."
+                )
+            else:
+                st.warning(f"⚠️ Stint {chosen_stint} only contains {len(stint_laps)} clean push lap(s). At least 4 clean laps are required to calculate regression without outlier distortion.")
         else:
-            st.warning("Not enough clean laps in this stint to train the regression model (minimum 4 laps required).")
+            st.info(f"No stint records available for {deg_driver}.")
     else:
         st.warning(f"No laps found for {deg_driver}.")
+
 
 
 # 6. CHAMPIONSHIP STANDINGS
