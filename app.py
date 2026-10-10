@@ -82,29 +82,52 @@ def get_standings_after_race(year, round_number):
         return None, None
 
 
-# --- DYNAMIC GRAND PRIX CALENDAR ---
+# --- DYNAMIC GRAND PRIX DISCOVERY (OFFLINE FIRST) ---
 @st.cache_data
-def get_season_calendar_and_default(selected_year):
+def get_available_gps(selected_year):
+    offline_gps = []
+    
+    # 1. Scan showcase_data/ for available races
+    if os.path.exists(SHOWCASE_DIR):
+        for f in sorted(os.listdir(SHOWCASE_DIR)):
+            if f.startswith(f"{selected_year}_") and f.endswith("_laps.parquet"):
+                slug_part = f.replace(f"{selected_year}_", "").replace("_laps.parquet", "")
+                # Extract clean slug name (strip round number prefix like '11_hungary')
+                slug_clean = "_".join([p for p in slug_part.split("_") if not p.isdigit()])
+                
+                # Match to official Grand Prix name via GP_ALIASES
+                matched_name = None
+                for canonical, aliases in GP_ALIASES.items():
+                    if slug_clean in aliases or any(a in slug_clean for a in aliases):
+                        if canonical == "hungarian": matched_name = "Hungarian Grand Prix"
+                        elif canonical == "italian": matched_name = "Italian Grand Prix"
+                        elif canonical == "spanish": matched_name = "Spanish Grand Prix"
+                        elif canonical == "dutch": matched_name = "Dutch Grand Prix"
+                        elif canonical == "azerbaijan": matched_name = "Azerbaijan Grand Prix"
+                        elif canonical == "bahrain": matched_name = "Bahrain Grand Prix"
+                        else: matched_name = f"{canonical.capitalize()} Grand Prix"
+                        break
+                
+                if not matched_name:
+                    matched_name = f"{slug_clean.replace('_', ' ').title()} Grand Prix"
+                    
+                if matched_name not in offline_gps:
+                    offline_gps.append(matched_name)
+
+    # If offline Parquet files are present, restrict the dropdown exclusively to valid data
+    if offline_gps:
+        return offline_gps, len(offline_gps) - 1
+
+    # 2. Live API fallback if viewing an older season without offline Parquets
     try:
         schedule = fastf1.get_event_schedule(selected_year)
         gp_events = schedule[schedule['RoundNumber'] > 0].copy()
         event_names = gp_events['EventName'].tolist()
-        
-        now = pd.Timestamp.now(tz='UTC')
-        event_dates = pd.to_datetime(gp_events['EventDate'], utc=True)
-        past_events = gp_events[event_dates <= now]
-
-        if not past_events.empty:
-            latest_past_event_name = past_events.iloc[-1]['EventName']
-            default_index = event_names.index(latest_past_event_name) if latest_past_event_name in event_names else 0
-        else:
-            default_index = 0
-
-        return event_names, default_index
+        return event_names, 0
     except Exception:
-        return ["Australian Grand Prix", "Azerbaijan Grand Prix", "Bahrain Grand Prix"], 0
+        return ["Hungarian Grand Prix", "Dutch Grand Prix", "Italian Grand Prix", "Spanish Grand Prix", "Azerbaijan Grand Prix", "Bahrain Grand Prix"], 0
 
-available_gps, default_gp_idx = get_season_calendar_and_default(year)
+available_gps, default_gp_idx = get_available_gps(year)
 
 grand_prix = st.sidebar.selectbox(
     "Grand Prix", 
@@ -567,18 +590,22 @@ with tab_telemetry:
 
                 c1, c2 = "#FF1801", "#00D2BE"
 
-                fig_tel.add_trace(go.Scatter(x=tel_1["Distance"], y=tel_1["Speed"], name=f"{driver_1} - {lap_desc_1}", line=dict(color=c1, width=2)), row=1, col=1)
-                fig_tel.add_trace(go.Scatter(x=tel_2["Distance"], y=tel_2["Speed"], name=f"{driver_2} - {lap_desc_2}", line=dict(color=c2, width=2)), row=1, col=1)
+                # 1. Speed (WebGL)
+                fig_tel.add_trace(go.Scattergl(x=tel_1["Distance"], y=tel_1["Speed"], name=f"{driver_1} {lap_desc_1}", line=dict(color=c1, width=2)), row=1, col=1)
+                fig_tel.add_trace(go.Scattergl(x=tel_2["Distance"], y=tel_2["Speed"], name=f"{driver_2} {lap_desc_2}", line=dict(color=c2, width=2)), row=1, col=1)
 
-                fig_tel.add_trace(go.Scatter(x=tel_1["Distance"], y=tel_1["Throttle"], name=f"{driver_1} Throttle", line=dict(color=c1, width=1.5), showlegend=False), row=2, col=1)
-                fig_tel.add_trace(go.Scatter(x=tel_2["Distance"], y=tel_2["Throttle"], name=f"{driver_2} Throttle", line=dict(color=c2, width=1.5), showlegend=False), row=2, col=1)
+                # 2. Throttle (WebGL)
+                fig_tel.add_trace(go.Scattergl(x=tel_1["Distance"], y=tel_1["Throttle"], name=f"{driver_1} Throttle", line=dict(color=c1, width=1.5), showlegend=False), row=2, col=1)
+                fig_tel.add_trace(go.Scattergl(x=tel_2["Distance"], y=tel_2["Throttle"], name=f"{driver_2} Throttle", line=dict(color=c2, width=1.5), showlegend=False), row=2, col=1)
 
                 b1 = tel_1["Brake"].astype(int) if tel_1["Brake"].dtype == bool else tel_1["Brake"]
                 b2 = tel_2["Brake"].astype(int) if tel_2["Brake"].dtype == bool else tel_2["Brake"]
 
-                fig_tel.add_trace(go.Scatter(x=tel_1["Distance"], y=b1, name=f"{driver_1} Brake", line=dict(color=c1, width=1.5), fill="tozeroy", showlegend=False), row=3, col=1)
-                fig_tel.add_trace(go.Scatter(x=tel_2["Distance"], y=b2, name=f"{driver_2} Brake", line=dict(color=c2, width=1.5), fill="tozeroy", showlegend=False), row=3, col=1)
+                # 3. Brake (WebGL)
+                fig_tel.add_trace(go.Scattergl(x=tel_1["Distance"], y=b1, name=f"{driver_1} Brake", line=dict(color=c1, width=1.5), fill="tozeroy", showlegend=False), row=3, col=1)
+                fig_tel.add_trace(go.Scattergl(x=tel_2["Distance"], y=b2, name=f"{driver_2} Brake", line=dict(color=c2, width=1.5), fill="tozeroy", showlegend=False), row=3, col=1)
 
+                # 4. Gear Selection (Standard Scatter preserved for stepped line support)
                 fig_tel.add_trace(go.Scatter(x=tel_1["Distance"], y=tel_1["nGear"], name=f"{driver_1} Gear", line=dict(color=c1, width=1.5, shape='hv'), showlegend=False), row=4, col=1)
                 fig_tel.add_trace(go.Scatter(x=tel_2["Distance"], y=tel_2["nGear"], name=f"{driver_2} Gear", line=dict(color=c2, width=1.5, shape='hv'), showlegend=False), row=4, col=1)
 
@@ -593,7 +620,8 @@ with tab_telemetry:
                     delta_time = t1_sec - t2_resampled
                     delta_dist = common_dist
 
-                fig_tel.add_trace(go.Scatter(x=delta_dist, y=delta_time, name="Delta-T", line=dict(color="#FFFFFF", width=1.5), fill="tozeroy", showlegend=False), row=5, col=1)
+                # 5. Delta (WebGL)
+                fig_tel.add_trace(go.Scattergl(x=delta_dist, y=delta_time, name="Delta-T", line=dict(color="#FFFFFF", width=1.5), fill="tozeroy", showlegend=False), row=5, col=1)
 
                 fig_tel.update_yaxes(title_text="Speed (km/h)", row=1, col=1)
                 fig_tel.update_yaxes(title_text="Throttle (%)", range=[-5, 105], row=2, col=1)
@@ -620,10 +648,11 @@ with tab_telemetry:
                 )
             )
 
-            fig_single.add_trace(go.Scatter(x=tel_1["Distance"], y=tel_1["Speed"], name="Speed", line=dict(color="#FF1801", width=2)), row=1, col=1)
-            fig_single.add_trace(go.Scatter(x=tel_1["Distance"], y=tel_1["Throttle"], name="Throttle", line=dict(color="#00D2BE", width=1.5)), row=2, col=1)
+            # Single driver WebGL traces
+            fig_single.add_trace(go.Scattergl(x=tel_1["Distance"], y=tel_1["Speed"], name="Speed", line=dict(color="#FF1801", width=2)), row=1, col=1)
+            fig_single.add_trace(go.Scattergl(x=tel_1["Distance"], y=tel_1["Throttle"], name="Throttle", line=dict(color="#00D2BE", width=1.5)), row=2, col=1)
             b1 = tel_1["Brake"].astype(int) if tel_1["Brake"].dtype == bool else tel_1["Brake"]
-            fig_single.add_trace(go.Scatter(x=tel_1["Distance"], y=b1, name="Brake", line=dict(color="#FF3333", width=1.5), fill="tozeroy"), row=3, col=1)
+            fig_single.add_trace(go.Scattergl(x=tel_1["Distance"], y=b1, name="Brake", line=dict(color="#FF3333", width=1.5), fill="tozeroy"), row=3, col=1)
             fig_single.add_trace(go.Scatter(x=tel_1["Distance"], y=tel_1["nGear"], name="Gear", line=dict(color="#FFF200", width=1.5, shape='hv')), row=4, col=1)
 
             fig_single.update_yaxes(title_text="km/h", row=1, col=1)
@@ -1002,21 +1031,21 @@ with tab_teammates:
                     )
                 )
 
-                # 1. Speed Trace
-                fig_telem.add_trace(go.Scatter(x=tel_d1["Distance"], y=tel_d1["Speed"], name=d1, line=dict(color=c1, width=2)), row=1, col=1)
-                fig_telem.add_trace(go.Scatter(x=tel_d2["Distance"], y=tel_d2["Speed"], name=d2, line=dict(color=c2, width=2)), row=1, col=1)
+                # 1. Speed Trace (WebGL)
+                fig_telem.add_trace(go.Scattergl(x=tel_d1["Distance"], y=tel_d1["Speed"], name=d1, line=dict(color=c1, width=2)), row=1, col=1)
+                fig_telem.add_trace(go.Scattergl(x=tel_d2["Distance"], y=tel_d2["Speed"], name=d2, line=dict(color=c2, width=2)), row=1, col=1)
 
-                # 2. Throttle Trace
-                fig_telem.add_trace(go.Scatter(x=tel_d1["Distance"], y=tel_d1["Throttle"], name=f"{d1} Throttle", line=dict(color=c1, width=1.5), showlegend=False), row=2, col=1)
-                fig_telem.add_trace(go.Scatter(x=tel_d2["Distance"], y=tel_d2["Throttle"], name=f"{d2} Throttle", line=dict(color=c2, width=1.5), showlegend=False), row=2, col=1)
+                # 2. Throttle Trace (WebGL)
+                fig_telem.add_trace(go.Scattergl(x=tel_d1["Distance"], y=tel_d1["Throttle"], name=f"{d1} Throttle", line=dict(color=c1, width=1.5), showlegend=False), row=2, col=1)
+                fig_telem.add_trace(go.Scattergl(x=tel_d2["Distance"], y=tel_d2["Throttle"], name=f"{d2} Throttle", line=dict(color=c2, width=1.5), showlegend=False), row=2, col=1)
 
-                # 3. Brake Trace
+                # 3. Brake Trace (WebGL)
                 b1 = tel_d1["Brake"].astype(int) if tel_d1["Brake"].dtype == bool else tel_d1["Brake"]
                 b2 = tel_d2["Brake"].astype(int) if tel_d2["Brake"].dtype == bool else tel_d2["Brake"]
-                fig_telem.add_trace(go.Scatter(x=tel_d1["Distance"], y=b1, name=f"{d1} Brake", line=dict(color=c1, width=1.5), fill="tozeroy", showlegend=False), row=3, col=1)
-                fig_telem.add_trace(go.Scatter(x=tel_d2["Distance"], y=b2, name=f"{d2} Brake", line=dict(color=c2, width=1.5), fill="tozeroy", showlegend=False), row=3, col=1)
+                fig_telem.add_trace(go.Scattergl(x=tel_d1["Distance"], y=b1, name=f"{d1} Brake", line=dict(color=c1, width=1.5), fill="tozeroy", showlegend=False), row=3, col=1)
+                fig_telem.add_trace(go.Scattergl(x=tel_d2["Distance"], y=b2, name=f"{d2} Brake", line=dict(color=c2, width=1.5), fill="tozeroy", showlegend=False), row=3, col=1)
 
-                # 4. Gear Selection Trace
+                # 4. Gear Selection Trace (Regular Scatter for clean stepped rendering)
                 fig_telem.add_trace(go.Scatter(x=tel_d1["Distance"], y=tel_d1["nGear"], name=f"{d1} Gear", line=dict(color=c1, width=1.5, shape='hv'), showlegend=False), row=4, col=1)
                 fig_telem.add_trace(go.Scatter(x=tel_d2["Distance"], y=tel_d2["nGear"], name=f"{d2} Gear", line=dict(color=c2, width=1.5, shape='hv'), showlegend=False), row=4, col=1)
 
