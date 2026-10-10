@@ -821,103 +821,127 @@ with tab_teammates:
 # PART 8: THEORETICAL OPTIMAL LAP ANALYZER
 # ==========================================
 with tab_ideal:
-    st.caption("Divides the circuit into micro-sectors to construct the driver's ultimate potential lap from their best individual sector splits.")
+    st.caption("Analyzes sector-by-sector execution and speed-trap performance across all race laps to calculate the driver's ultimate potential lap.")
 
     if session is not None and hasattr(session, 'laps') and not session.laps.empty:
-        col_id_d, col_id_sec = st.columns([1, 1])
+        col_id_d, col_id_mode = st.columns([1, 1])
         with col_id_d:
             ideal_driver = st.selectbox("Select Driver to Analyze", drivers, key="ideal_driver_select")
-        with col_id_sec:
-            num_sectors = st.slider("Number of Micro-Sectors", min_value=15, max_value=40, value=25, step=5)
+        with col_id_mode:
+            analysis_scope = st.radio("Benchmark Pool", ["Driver Personal Best", "Full Grid Best (Ultimate Lap)"], horizontal=True)
 
-        driver_laps = session.laps.pick_driver(ideal_driver).pick_quicklaps()
+        pool_laps = session.laps.pick_quicklaps().copy() if analysis_scope == "Full Grid Best (Ultimate Lap)" else session.laps.pick_driver(ideal_driver).pick_quicklaps().copy()
+        driver_push_laps = session.laps.pick_driver(ideal_driver).pick_quicklaps().copy()
 
-        if len(driver_laps) >= 2:
-            # 1. Fetch telemetry for all clean laps
-            lap_tel_list = []
-            for _, lap_row in driver_laps.iterrows():
-                try:
-                    t = lap_row.get_telemetry()
-                    if t is not None and not t.empty and 'Distance' in t.columns and 'Time' in t.columns:
-                        t = t.copy()
-                        t['LapNumber'] = lap_row['LapNumber']
-                        t['TimeSeconds'] = pd.to_timedelta(t['Time']).dt.total_seconds()
-                        lap_tel_list.append(t[['Distance', 'TimeSeconds', 'Speed', 'LapNumber', 'X', 'Y']])
-                except Exception:
-                    continue
+        # Convert Sector Times to Seconds
+        for s in ['Sector1Time', 'Sector2Time', 'Sector3Time']:
+            if s in pool_laps.columns:
+                pool_laps[f'{s}_s'] = pool_laps[s].apply(lambda x: x.total_seconds() if pd.notna(x) and hasattr(x, 'total_seconds') else None)
+            if s in driver_push_laps.columns:
+                driver_push_laps[f'{s}_s'] = driver_push_laps[s].apply(lambda x: x.total_seconds() if pd.notna(x) and hasattr(x, 'total_seconds') else None)
 
-            if lap_tel_list:
-                all_tel = pd.concat(lap_tel_list, ignore_index=True)
-                track_length = all_tel['Distance'].max()
-                sector_size = track_length / num_sectors
+        # Check if sectors are populated
+        has_sectors = all(f'{s}_s' in pool_laps.columns and pool_laps[f'{s}_s'].notna().any() for s in ['Sector1Time', 'Sector2Time', 'Sector3Time'])
 
-                # Assign micro-sector index
-                all_tel['Sector'] = (all_tel['Distance'] // sector_size).astype(int).clip(upper=num_sectors - 1)
+        if has_sectors and not driver_push_laps.empty:
+            # 1. Best Sector Splits
+            best_s1 = pool_laps['Sector1Time_s'].min()
+            best_s2 = pool_laps['Sector2Time_s'].min()
+            best_s3 = pool_laps['Sector3Time_s'].min()
+            theoretical_lap_time = best_s1 + best_s2 + best_s3
 
-                # 2. Compute transit time per micro-sector per lap
-                sector_times = []
-                for (lap_num, sec_idx), group in all_tel.groupby(['LapNumber', 'Sector']):
-                    t_entry = group['TimeSeconds'].min()
-                    t_exit = group['TimeSeconds'].max()
-                    transit = t_exit - t_entry
-                    if transit > 0:
-                        sector_times.append({
-                            'LapNumber': lap_num,
-                            'Sector': sec_idx,
-                            'TransitTime': transit
-                        })
+            # 2. Driver's Actual Best Lap
+            fastest_lap = session.laps.pick_driver(ideal_driver).pick_fastest()
+            actual_lap_time = fastest_lap['LapTime'].total_seconds() if fastest_lap is not None and pd.notna(fastest_lap['LapTime']) else None
+            
+            act_s1 = fastest_lap['Sector1Time'].total_seconds() if pd.notna(fastest_lap.get('Sector1Time')) else None
+            act_s2 = fastest_lap['Sector2Time'].total_seconds() if pd.notna(fastest_lap.get('Sector2Time')) else None
+            act_s3 = fastest_lap['Sector3Time'].total_seconds() if pd.notna(fastest_lap.get('Sector3Time')) else None
 
-                sec_df = pd.DataFrame(sector_times)
+            def fmt_s(sec):
+                if sec is None or pd.isna(sec): return "N/A"
+                m = int(sec // 60)
+                s = sec % 60
+                return f"{m}:{s:06.3f}"
 
-                if not sec_df.empty:
-                    # Ideal split per sector
-                    ideal_splits = sec_df.groupby('Sector')['TransitTime'].min()
-                    theoretical_lap_time = ideal_splits.sum()
+            # KPI Summary
+            k1, k2, k3, k4 = st.columns(4)
+            with k1:
+                st.metric("Actual Fastest Lap", fmt_s(actual_lap_time), f"Lap {int(fastest_lap['LapNumber'])}")
+            with k2:
+                st.metric("Theoretical Ideal Lap", fmt_s(theoretical_lap_time), f"Sum of Best S1+S2+S3")
+            with k3:
+                delta_gap = (actual_lap_time - theoretical_lap_time) if actual_lap_time else 0.0
+                st.metric("Potential Time Gain", f"-{delta_gap:.3f} s", delta_color="inverse")
+            with k4:
+                efficiency = (theoretical_lap_time / actual_lap_time * 100) if actual_lap_time else 100.0
+                st.metric("Execution Efficiency", f"{efficiency:.2f}%")
 
-                    # Actual fastest lap time
-                    fastest_lap_row = session.laps.pick_driver(ideal_driver).pick_fastest()
-                    actual_lap_time = fastest_lap_row['LapTime'].total_seconds() if fastest_lap_row is not None and pd.notna(fastest_lap_row['LapTime']) else None
+            # Sector-by-Sector Breakdown
+            sec_breakdown = pd.DataFrame({
+                "Sector": ["Sector 1", "Sector 2", "Sector 3"],
+                "Actual Best Lap": [act_s1, act_s2, act_s3],
+                "Theoretical Best": [best_s1, best_s2, best_s3],
+            })
+            sec_breakdown["Time Lost (s)"] = (sec_breakdown["Actual Best Lap"] - sec_breakdown["Theoretical Best"]).round(3)
+            sec_breakdown["Efficiency (%)"] = ((sec_breakdown["Theoretical Best"] / sec_breakdown["Actual Best Lap"]) * 100).round(2)
 
-                    def fmt_s(sec):
-                        if sec is None or pd.isna(sec): return "N/A"
-                        m = int(sec // 60)
-                        s = sec % 60
-                        return f"{m}:{s:06.3f}"
+            col_chart1, col_chart2 = st.columns([1.2, 1])
 
-                    # KPI Cards
-                    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-                    with kpi1:
-                        st.metric("Actual Fastest Lap", fmt_s(actual_lap_time))
-                    with kpi2:
-                        st.metric("Theoretical Ideal Lap", fmt_s(theoretical_lap_time))
-                    with kpi3:
-                        delta_loss = (actual_lap_time - theoretical_lap_time) if actual_lap_time else 0.0
-                        st.metric("Potential Gain Left on Table", f"-{delta_loss:.3f} s", delta_color="inverse")
-                    with kpi4:
-                        consistency_pct = (theoretical_lap_time / actual_lap_time * 100) if actual_lap_time else 100.0
-                        st.metric("Lap Execution Efficiency", f"{consistency_pct:.1f}%")
+            with col_chart1:
+                fig_sec = px.bar(
+                    sec_breakdown,
+                    x="Sector",
+                    y="Time Lost (s)",
+                    text="Time Lost (s)",
+                    title=f"Time Deficit by Sector vs Ideal ({ideal_driver})",
+                    color="Time Lost (s)",
+                    color_continuous_scale="Reds"
+                )
+                fig_sec.update_traces(texttemplate='%{text:.3f}s', textposition='outside')
+                fig_sec.update_layout(template="plotly_dark", height=420)
+                st.plotly_chart(fig_sec, use_container_width=True)
 
-                    # 3. Bar Chart: Potential Time Gain by Micro-Sector
-                    fastest_lap_num = fastest_lap_row['LapNumber'] if fastest_lap_row is not None else None
-                    fastest_splits = sec_df[sec_df['LapNumber'] == fastest_lap_num].set_index('Sector')['TransitTime']
+            with col_chart2:
+                # Speed Traps Comparison across Sectors if available
+                st.markdown("#### ⚡ Sector Benchmark Summary")
+                st.dataframe(
+                    sec_breakdown.style.format({
+                        "Actual Best Lap": "{:.3f}s",
+                        "Theoretical Best": "{:.3f}s",
+                        "Time Lost (s)": "+{:.3f}s",
+                        "Efficiency (%)": "{:.2f}%"
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
-                    gain_per_sector = (fastest_splits - ideal_splits).clip(lower=0).reset_index()
-                    gain_per_sector.columns = ['MicroSector', 'TimeLost_Seconds']
+                if delta_gap > 0:
+                    worst_sec = sec_breakdown.sort_values(by="Time Lost (s)", ascending=False).iloc[0]["Sector"]
+                    st.info(f"💡 **Analysis:** The largest deficit occurred in **{worst_sec}**, costing **{sec_breakdown['Time Lost (s)'].max():.3f}s** compared to optimal sector pace.")
+                else:
+                    st.success("🎯 **Flawless Execution:** The driver matched all optimal sectors on their fastest lap!")
 
-                    fig_loss = px.bar(
-                        gain_per_sector,
-                        x='MicroSector',
-                        y='TimeLost_Seconds',
-                        title=f"Time Lost vs Theoretical Best across {num_sectors} Micro-Sectors (Lap {fastest_lap_num})",
-                        labels={'MicroSector': 'Micro-Sector Index (Start to Finish)', 'TimeLost_Seconds': 'Time Lost (seconds)'},
-                        color='TimeLost_Seconds',
-                        color_continuous_scale='Reds'
-                    )
-                    fig_loss.update_layout(template='plotly_dark', height=400)
-                    st.plotly_chart(fig_loss, use_container_width=True)
-            else:
-                st.info(f"Detailed per-lap telemetry traces unavailable for {ideal_driver} to run micro-sector analysis.")
+            # Telemetry Speed Overlay along the actual fastest lap
+            tel = session.get_driver_telemetry(ideal_driver) if hasattr(session, "get_driver_telemetry") else None
+            if tel is None and fastest_lap is not None:
+                try: tel = fastest_lap.get_telemetry()
+                except Exception: pass
+
+            if tel is not None and not tel.empty and 'Distance' in tel.columns and 'Speed' in tel.columns:
+                st.markdown("---")
+                st.markdown(f"#### 🔍 Speed Profile on Driver's Fastest Lap ({fmt_s(actual_lap_time)})")
+                fig_tel_ideal = px.line(
+                    tel,
+                    x="Distance",
+                    y="Speed",
+                    title=f"{ideal_driver} Speed Trace with Sector Markers",
+                    labels={"Distance": "Track Distance (m)", "Speed": "Speed (km/h)"}
+                )
+                fig_tel_ideal.update_traces(line=dict(color="#00D2BE", width=2))
+                fig_tel_ideal.update_layout(template="plotly_dark", height=350, hovermode="x unified")
+                st.plotly_chart(fig_tel_ideal, use_container_width=True)
         else:
-            st.info(f"At least 2 clean push laps are required for {ideal_driver} to construct a theoretical ideal lap.")
+            st.info(f"Sector timing splits are not recorded in this session for {ideal_driver}.")
     else:
         st.info("Select a valid session to display theoretical lap analytics.")
