@@ -62,6 +62,16 @@ PLOTLY_CONFIG = {
     "displayModeBar": False
 }
 
+# --- GLOBAL PLOTLY MOBILE OVERRIDE ---
+_orig_plotly_chart = st.plotly_chart
+
+def responsive_plotly_chart(figure_or_data, **kwargs):
+    kwargs.setdefault("config", PLOTLY_CONFIG)
+    kwargs.setdefault("use_container_width", True)
+    return _orig_plotly_chart(figure_or_data, **kwargs)
+
+st.plotly_chart = responsive_plotly_chart
+
 
 st.title("🏎️ Formula 1 Race & Telemetry Dashboard")
 
