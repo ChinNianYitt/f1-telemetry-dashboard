@@ -156,6 +156,44 @@ GP_ALIASES = {
 }
 
 
+
+# --- OFFICIAL CONSTRUCTOR COLOR PALETTE ENGINE ---
+TEAM_COLORS = {
+    "Ferrari": "#E8002D",
+    "Red Bull Racing": "#3671C6",
+    "McLaren": "#FF8000",
+    "Mercedes": "#27F4D2",
+    "Aston Martin": "#229971",
+    "Alpine": "#0093CC",
+    "Williams": "#64C4FF",
+    "RB": "#6692FF",
+    "Kick Sauber": "#52E252",
+    "Sauber": "#52E252",
+    "Haas F1 Team": "#B6BABD",
+    "Haas": "#B6BABD"
+}
+
+def get_team_color(team_name, fallback="#00D2BE"):
+    if not team_name or pd.isna(team_name):
+        return fallback
+    for name, hex_code in TEAM_COLORS.items():
+        if name.lower() in str(team_name).lower():
+            return hex_code
+    return fallback
+
+def get_driver_color(session_obj, driver_code, fallback="#FF1801"):
+    try:
+        if hasattr(session_obj, 'results') and not session_obj.results.empty:
+            match = session_obj.results[session_obj.results['Abbreviation'] == str(driver_code)]
+            if not match.empty:
+                team = match.iloc[0].get('TeamName', '')
+                return get_team_color(team, fallback)
+    except Exception:
+        pass
+    return fallback
+
+
+
 # --- DYNAMIC GRAND PRIX DISCOVERY (OFFLINE FIRST) ---
 @st.cache_data
 def get_available_gps(selected_year):
@@ -638,7 +676,11 @@ with tab_telemetry:
                     )
                 )
 
-                c1, c2 = "#FF1801", "#00D2BE"
+                # Official Constructor Color Assignment
+                c1 = get_driver_color(session, driver_1, fallback="#FF1801")
+                c2 = get_driver_color(session, driver_2, fallback="#00D2BE")
+                if c1 == c2:
+                    c2 = "#FFFFFF"
 
                 # 1. Speed (WebGL)
                 fig_tel.add_trace(go.Scattergl(x=tel_1["Distance"], y=tel_1["Speed"], name=f"{driver_1} {lap_desc_1}", line=dict(color=c1, width=2)), row=1, col=1)
@@ -655,7 +697,7 @@ with tab_telemetry:
                 fig_tel.add_trace(go.Scattergl(x=tel_1["Distance"], y=b1, name=f"{driver_1} Brake", line=dict(color=c1, width=1.5), fill="tozeroy", showlegend=False), row=3, col=1)
                 fig_tel.add_trace(go.Scattergl(x=tel_2["Distance"], y=b2, name=f"{driver_2} Brake", line=dict(color=c2, width=1.5), fill="tozeroy", showlegend=False), row=3, col=1)
 
-                # 4. Gear Selection (Standard Scatter preserved for stepped line support)
+                # 4. Gear Selection (Standard Scatter for stepped lines)
                 fig_tel.add_trace(go.Scatter(x=tel_1["Distance"], y=tel_1["nGear"], name=f"{driver_1} Gear", line=dict(color=c1, width=1.5, shape='hv'), showlegend=False), row=4, col=1)
                 fig_tel.add_trace(go.Scatter(x=tel_2["Distance"], y=tel_2["nGear"], name=f"{driver_2} Gear", line=dict(color=c2, width=1.5, shape='hv'), showlegend=False), row=4, col=1)
 
@@ -682,6 +724,101 @@ with tab_telemetry:
 
                 fig_tel.update_layout(template="plotly_dark", height=720, hovermode="x unified")
                 st.plotly_chart(fig_tel, use_container_width=True, config=PLOTLY_CONFIG)
+
+                # ==============================================================
+                # AUTOMATED CORNER APEX & BRAKING POINT ANALYZER
+                # ==============================================================
+                st.markdown("---")
+                st.subheader("🎯 Automated Corner Apex & Braking Dynamics Analysis")
+                st.caption(
+                    "Algorithmic corner segmentation: detects local velocity minima to identify corner apexes, "
+                    "then calculates braking threshold markers, apex rolling velocity, and full throttle application points."
+                )
+
+                def detect_corners(tel_df):
+                    if tel_df is None or tel_df.empty or 'Speed' not in tel_df.columns:
+                        return []
+                    speeds = tel_df['Speed'].values
+                    dists = tel_df['Distance'].values
+                    brakes = (tel_df['Brake'].astype(int) if tel_df['Brake'].dtype == bool else tel_df['Brake']).values
+                    throttles = tel_df['Throttle'].values
+
+                    corners = []
+                    w = 20
+                    for i in range(w, len(speeds) - w):
+                        if speeds[i] == np.min(speeds[i-w:i+w+1]) and speeds[i] < 260:
+                            if corners and (dists[i] - corners[-1]['apex_dist']) < 150:
+                                continue
+
+                            apex_dist = dists[i]
+                            apex_speed = speeds[i]
+
+                            # 1. Search backward for initial braking point
+                            brake_dist = None
+                            for j in range(i, max(0, i - 120), -1):
+                                if brakes[j] > 10:
+                                    brake_dist = dists[j]
+                                elif brake_dist is not None and brakes[j] <= 5:
+                                    break
+                            if brake_dist is None:
+                                brake_dist = dists[max(0, i - 10)]
+
+                            # 2. Search forward for 100% throttle pickup point
+                            throttle_dist = None
+                            for k in range(i, min(len(throttles), i + 120)):
+                                if throttles[k] >= 95:
+                                    throttle_dist = dists[k]
+                                    break
+                            if throttle_dist is None:
+                                throttle_dist = dists[min(len(throttles) - 1, i + 10)]
+
+                            corners.append({
+                                'apex_dist': apex_dist,
+                                'apex_speed': apex_speed,
+                                'brake_dist': brake_dist,
+                                'throttle_dist': throttle_dist
+                            })
+                    return corners
+
+                corners_d1 = detect_corners(tel_1)
+                corners_d2 = detect_corners(tel_2)
+
+                if corners_d1 and corners_d2:
+                    comparison_records = []
+                    num_turns = min(len(corners_d1), len(corners_d2), 18)
+
+                    for idx in range(num_turns):
+                        c1_item = corners_d1[idx]
+                        c2_candidates = [c for c in corners_d2 if abs(c['apex_dist'] - c1_item['apex_dist']) < 100]
+                        if not c2_candidates:
+                            continue
+                        c2_item = min(c2_candidates, key=lambda x: abs(x['apex_dist'] - c1_item['apex_dist']))
+
+                        speed_diff = c1_item['apex_speed'] - c2_item['apex_speed']
+                        brake_diff = c1_item['brake_dist'] - c2_item['brake_dist']
+                        throttle_diff = c1_item['throttle_dist'] - c2_item['throttle_dist']
+
+                        comparison_records.append({
+                            "Corner": f"Turn {idx + 1}",
+                            "Approx Distance": f"{int(c1_item['apex_dist'])} m",
+                            f"{driver_1} Apex Speed": f"{c1_item['apex_speed']:.1f} km/h",
+                            f"{driver_2} Apex Speed": f"{c2_item['apex_speed']:.1f} km/h",
+                            "Apex Speed Delta": f"{speed_diff:+.1f} km/h ({driver_1 if speed_diff > 0 else driver_2})",
+                            "Braking Advantage": f"{abs(brake_diff):.0f} m deeper ({driver_1 if brake_diff > 0 else driver_2})",
+                            "Throttle Pickup": f"{abs(throttle_diff):.0f} m earlier ({driver_1 if throttle_diff < 0 else driver_2})"
+                        })
+
+                    if comparison_records:
+                        df_corners = pd.DataFrame(comparison_records)
+                        st.dataframe(df_corners, use_container_width=True, hide_index=True)
+
+                        best_apex_turn = max(comparison_records, key=lambda r: float(r['Apex Speed Delta'].split()[0].replace('+', '')))
+                        st.info(
+                            f"💡 **Corner Dynamics Key Insight:** The most significant apex discrepancy is at **{best_apex_turn['Corner']}** "
+                            f"({best_apex_turn['Approx Distance']}), where the delta reached **{best_apex_turn['Apex Speed Delta']}**."
+                        )
+                else:
+                    st.info("Insufficient cornering zones detected to build comparison dynamics matrix.")
             else:
                 st.warning(f"No telemetry data found for {driver_2}.")
         else:
@@ -698,8 +835,9 @@ with tab_telemetry:
                 )
             )
 
-            # Single driver WebGL traces
-            fig_single.add_trace(go.Scattergl(x=tel_1["Distance"], y=tel_1["Speed"], name="Speed", line=dict(color="#FF1801", width=2)), row=1, col=1)
+            c_single = get_driver_color(session, driver_1, fallback="#FF1801")
+
+            fig_single.add_trace(go.Scattergl(x=tel_1["Distance"], y=tel_1["Speed"], name="Speed", line=dict(color=c_single, width=2)), row=1, col=1)
             fig_single.add_trace(go.Scattergl(x=tel_1["Distance"], y=tel_1["Throttle"], name="Throttle", line=dict(color="#00D2BE", width=1.5)), row=2, col=1)
             b1 = tel_1["Brake"].astype(int) if tel_1["Brake"].dtype == bool else tel_1["Brake"]
             fig_single.add_trace(go.Scattergl(x=tel_1["Distance"], y=b1, name="Brake", line=dict(color="#FF3333", width=1.5), fill="tozeroy"), row=3, col=1)
@@ -711,8 +849,8 @@ with tab_telemetry:
             fig_single.update_yaxes(title_text="Gear", dtick=1, range=[0.5, 8.5], row=4, col=1)
             fig_single.update_xaxes(title_text="Track Distance (m)", row=4, col=1)
 
-            fig_single.update_layout(template="plotly_dark", height=850, hovermode="x unified", showlegend=False)
-            st.plotly_chart(fig_single, use_container_width=True)
+            fig_single.update_layout(template="plotly_dark", height=720, hovermode="x unified", showlegend=False)
+            st.plotly_chart(fig_single, use_container_width=True, config=PLOTLY_CONFIG)
     else:
         st.warning(f"No telemetry data found for {driver_1}.")
 
@@ -1066,7 +1204,9 @@ with tab_teammates:
                     except Exception: pass
 
             if tel_d1 is not None and tel_d2 is not None and not tel_d1.empty and not tel_d2.empty:
-                c1, c2 = "#FF5733", "#33C1FF"
+                team_base_color = get_team_color(selected_team, fallback="#FF5733")
+                c1 = team_base_color
+                c2 = "#FFFFFF"
 
                 fig_telem = sp.make_subplots(
                     rows=4, cols=1,
